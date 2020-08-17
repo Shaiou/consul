@@ -406,44 +406,6 @@ func (a *Agent) Start(ctx context.Context) error {
 	a.stateLock.Lock()
 	defer a.stateLock.Unlock()
 
-	// This needs to be done early on as it will potentially alter the configuration
-	// and then how other bits are brought up
-	c, err := a.autoConf.InitialConfiguration(ctx)
-	if err != nil {
-		return err
-	}
-
-	// copy over the existing node id, this cannot be
-	// changed while running anyways but this prevents
-	// breaking some existing behavior. then overwrite
-	// the configuration
-	c.NodeID = a.config.NodeID
-	a.config = c
-
-	if err := a.tlsConfigurator.Update(a.config.ToTLSUtilConfig()); err != nil {
-		return fmt.Errorf("Failed to load TLS configurations after applying auto-config settings: %w", err)
-	}
-
-	if err := a.CheckSecurity(c); err != nil {
-		a.logger.Error("Security error while parsing configuration: %#v", err)
-		return err
-	}
-
-	// Warn if the node name is incompatible with DNS
-	if InvalidDnsRe.MatchString(a.config.NodeName) {
-		a.logger.Warn("Node name will not be discoverable "+
-			"via DNS due to invalid characters. Valid characters include "+
-			"all alpha-numerics and dashes.",
-			"node_name", a.config.NodeName,
-		)
-	} else if len(a.config.NodeName) > MaxDNSLabelLength {
-		a.logger.Warn("Node name will not be discoverable "+
-			"via DNS due to it being too long. Valid lengths are between "+
-			"1 and 63 bytes.",
-			"node_name", a.config.NodeName,
-		)
-	}
-
 	// TODO: move to newBaseDeps
 	// TODO: handle error
 	a.loadTokens(a.config)
