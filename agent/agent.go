@@ -406,10 +406,7 @@ func (a *Agent) Start(ctx context.Context) error {
 	a.stateLock.Lock()
 	defer a.stateLock.Unlock()
 
-	// TODO: move to newBaseDeps
-	// TODO: handle error
-	a.loadTokens(a.config)
-	a.loadEnterpriseTokens(a.config)
+	c := a.config
 
 	// create the local state
 	a.State = local.NewState(LocalConfig(c), a.logger, a.tokens)
@@ -3415,40 +3412,6 @@ func (a *Agent) unloadChecks() error {
 	return nil
 }
 
-type persistedTokens struct {
-	Replication string `json:"replication,omitempty"`
-	AgentMaster string `json:"agent_master,omitempty"`
-	Default     string `json:"default,omitempty"`
-	Agent       string `json:"agent,omitempty"`
-}
-
-func (a *Agent) getPersistedTokens() (*persistedTokens, error) {
-	persistedTokens := &persistedTokens{}
-	if !a.config.ACLEnableTokenPersistence {
-		return persistedTokens, nil
-	}
-
-	a.persistedTokensLock.RLock()
-	defer a.persistedTokensLock.RUnlock()
-
-	tokensFullPath := filepath.Join(a.config.DataDir, tokensPath)
-
-	buf, err := ioutil.ReadFile(tokensFullPath)
-	if err != nil {
-		if os.IsNotExist(err) {
-			// non-existence is not an error we care about
-			return persistedTokens, nil
-		}
-		return persistedTokens, fmt.Errorf("failed reading tokens file %q: %s", tokensFullPath, err)
-	}
-
-	if err := json.Unmarshal(buf, persistedTokens); err != nil {
-		return persistedTokens, fmt.Errorf("failed to decode tokens file %q: %s", tokensFullPath, err)
-	}
-
-	return persistedTokens, nil
-}
-
 // CheckSecurity Performs security checks in Consul Configuration
 // It might return an error if configuration is considered too dangerous
 func (a *Agent) CheckSecurity(conf *config.RuntimeConfig) error {
@@ -3462,56 +3425,6 @@ func (a *Agent) CheckSecurity(conf *config.RuntimeConfig) error {
 		}
 	}
 	return nil
-}
-
-func (a *Agent) loadTokens(conf *config.RuntimeConfig) error {
-	persistedTokens, persistenceErr := a.getPersistedTokens()
-
-	if persistenceErr != nil {
-		a.logger.Warn("unable to load persisted tokens", "error", persistenceErr)
-	}
-
-	if persistedTokens.Default != "" {
-		a.tokens.UpdateUserToken(persistedTokens.Default, token.TokenSourceAPI)
-
-		if conf.ACLToken != "" {
-			a.logger.Warn("\"default\" token present in both the configuration and persisted token store, using the persisted token")
-		}
-	} else {
-		a.tokens.UpdateUserToken(conf.ACLToken, token.TokenSourceConfig)
-	}
-
-	if persistedTokens.Agent != "" {
-		a.tokens.UpdateAgentToken(persistedTokens.Agent, token.TokenSourceAPI)
-
-		if conf.ACLAgentToken != "" {
-			a.logger.Warn("\"agent\" token present in both the configuration and persisted token store, using the persisted token")
-		}
-	} else {
-		a.tokens.UpdateAgentToken(conf.ACLAgentToken, token.TokenSourceConfig)
-	}
-
-	if persistedTokens.AgentMaster != "" {
-		a.tokens.UpdateAgentMasterToken(persistedTokens.AgentMaster, token.TokenSourceAPI)
-
-		if conf.ACLAgentMasterToken != "" {
-			a.logger.Warn("\"agent_master\" token present in both the configuration and persisted token store, using the persisted token")
-		}
-	} else {
-		a.tokens.UpdateAgentMasterToken(conf.ACLAgentMasterToken, token.TokenSourceConfig)
-	}
-
-	if persistedTokens.Replication != "" {
-		a.tokens.UpdateReplicationToken(persistedTokens.Replication, token.TokenSourceAPI)
-
-		if conf.ACLReplicationToken != "" {
-			a.logger.Warn("\"replication\" token present in both the configuration and persisted token store, using the persisted token")
-		}
-	} else {
-		a.tokens.UpdateReplicationToken(conf.ACLReplicationToken, token.TokenSourceConfig)
-	}
-
-	return persistenceErr
 }
 
 // snapshotCheckState is used to snapshot the current state of the health
@@ -3699,7 +3612,6 @@ func (a *Agent) reloadConfigInternal(newCfg *config.RuntimeConfig) error {
 	// to ensure the correct tokens are available for attaching to
 	// the checks and service registrations.
 	a.loadTokens(newCfg)
-	a.loadEnterpriseTokens(newCfg)
 
 	if err := a.tlsConfigurator.Update(newCfg.ToTLSUtilConfig()); err != nil {
 		return fmt.Errorf("Failed reloading tls configuration: %s", err)
